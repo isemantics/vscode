@@ -6,84 +6,69 @@
 'use strict';
 
 import * as assert from 'assert';
-import { Query } from '../../common/extensionQuery';
+import { Query } from 'vs/workbench/parts/extensions/common/extensionQuery';
 
 suite('Extension query', () => {
 	test('parse', () => {
 		let query = Query.parse('');
 		assert.equal(query.value, '');
 		assert.equal(query.sortBy, '');
-		assert.equal(query.sortOrder, '');
 
 		query = Query.parse('hello');
 		assert.equal(query.value, 'hello');
 		assert.equal(query.sortBy, '');
-		assert.equal(query.sortOrder, '');
 
 		query = Query.parse('   hello world ');
 		assert.equal(query.value, 'hello world');
 		assert.equal(query.sortBy, '');
-		assert.equal(query.sortOrder, '');
 
 		query = Query.parse('@sort');
 		assert.equal(query.value, '@sort');
 		assert.equal(query.sortBy, '');
-		assert.equal(query.sortOrder, '');
 
 		query = Query.parse('@sort:');
 		assert.equal(query.value, '@sort:');
 		assert.equal(query.sortBy, '');
-		assert.equal(query.sortOrder, '');
 
 		query = Query.parse('  @sort:  ');
 		assert.equal(query.value, '@sort:');
 		assert.equal(query.sortBy, '');
-		assert.equal(query.sortOrder, '');
 
 		query = Query.parse('@sort:installs');
 		assert.equal(query.value, '');
 		assert.equal(query.sortBy, 'installs');
-		assert.equal(query.sortOrder, '');
 
 		query = Query.parse('   @sort:installs   ');
 		assert.equal(query.value, '');
 		assert.equal(query.sortBy, 'installs');
-		assert.equal(query.sortOrder, '');
 
 		query = Query.parse('@sort:installs-');
 		assert.equal(query.value, '');
 		assert.equal(query.sortBy, 'installs');
-		assert.equal(query.sortOrder, '');
 
 		query = Query.parse('@sort:installs-foo');
 		assert.equal(query.value, '');
 		assert.equal(query.sortBy, 'installs');
-		assert.equal(query.sortOrder, '');
 
-		query = Query.parse('@sort:installs-asc');
+		query = Query.parse('@sort:installs');
 		assert.equal(query.value, '');
 		assert.equal(query.sortBy, 'installs');
-		assert.equal(query.sortOrder, 'asc');
 
-		query = Query.parse('@sort:installs-desc');
+		query = Query.parse('@sort:installs');
 		assert.equal(query.value, '');
 		assert.equal(query.sortBy, 'installs');
-		assert.equal(query.sortOrder, 'desc');
 
-		query = Query.parse('vs @sort:installs-desc');
+		query = Query.parse('vs @sort:installs');
 		assert.equal(query.value, 'vs');
 		assert.equal(query.sortBy, 'installs');
-		assert.equal(query.sortOrder, 'desc');
 
-		query = Query.parse('vs @sort:installs-desc code');
+		query = Query.parse('vs @sort:installs code');
 		assert.equal(query.value, 'vs  code');
 		assert.equal(query.sortBy, 'installs');
-		assert.equal(query.sortOrder, 'desc');
 
 		query = Query.parse('@sort:installs @sort:ratings');
 		assert.equal(query.value, '');
 		assert.equal(query.sortBy, 'ratings');
-		assert.equal(query.sortOrder, '');
 	});
 
 	test('toString', () => {
@@ -99,14 +84,11 @@ suite('Extension query', () => {
 		query = new Query('', 'installs', '');
 		assert.equal(query.toString(), '@sort:installs');
 
-		query = new Query('', 'installs', 'asc');
-		assert.equal(query.toString(), '@sort:installs-asc');
+		query = new Query('', 'installs', '');
+		assert.equal(query.toString(), '@sort:installs');
 
-		query = new Query('', 'installs', 'desc');
-		assert.equal(query.toString(), '@sort:installs-desc');
-
-		query = new Query('', 'installs', 'foo');
-		assert.equal(query.toString(), '@sort:installs-foo');
+		query = new Query('', 'installs', '');
+		assert.equal(query.toString(), '@sort:installs');
 
 		query = new Query('hello', 'installs', '');
 		assert.equal(query.toString(), 'hello @sort:installs');
@@ -128,13 +110,13 @@ suite('Extension query', () => {
 		query = new Query('', 'installs', '');
 		assert(query.isValid());
 
-		query = new Query('', 'installs', 'asc');
+		query = new Query('', 'installs', '');
 		assert(query.isValid());
 
-		query = new Query('', 'installs', 'desc');
+		query = new Query('', 'installs', '');
 		assert(query.isValid());
 
-		query = new Query('', 'installs', 'foo');
+		query = new Query('', 'installs', '');
 		assert(query.isValid());
 
 		query = new Query('hello', 'installs', '');
@@ -142,12 +124,6 @@ suite('Extension query', () => {
 
 		query = new Query('  hello      ', 'installs', '');
 		assert(query.isValid());
-
-		query = new Query('hello', '', 'asc');
-		assert(!query.isValid());
-
-		query = new Query('', '', 'asc');
-		assert(!query.isValid());
 	});
 
 	test('equals', () => {
@@ -161,7 +137,7 @@ suite('Extension query', () => {
 		query2 = new Query('hello', 'installs', '');
 		assert(!query1.equals(query2));
 
-		query2 = new Query('hello', 'installs', 'asc');
+		query2 = new Query('hello', 'installs', '');
 		assert(!query1.equals(query2));
 	});
 });

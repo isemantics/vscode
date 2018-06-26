@@ -5,11 +5,10 @@
 'use strict';
 
 import URI from 'vs/base/common/uri';
-import {TPromise} from 'vs/base/common/winjs.base';
-import {createDecorator} from 'vs/platform/instantiation/common/instantiation';
+import { TPromise } from 'vs/base/common/winjs.base';
+import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
 
 export const IOpenerService = createDecorator<IOpenerService>('openerService');
-
 
 export interface IOpenerService {
 
@@ -26,5 +25,5 @@ export interface IOpenerService {
 
 export const NullOpenerService: IOpenerService = Object.freeze({
 	_serviceBrand: undefined,
-	open() { return TPromise.as(undefined);}
+	open() { return TPromise.as(undefined); }
 });

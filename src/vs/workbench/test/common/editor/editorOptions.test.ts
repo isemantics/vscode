@@ -6,9 +6,9 @@
 'use strict';
 
 import * as assert from 'assert';
-import {EditorOptions, TextEditorOptions} from 'vs/workbench/common/editor';
+import { EditorOptions, TextEditorOptions } from 'vs/workbench/common/editor';
 
-suite('Workbench - EditorOptions', () => {
+suite('Workbench editor options', () => {
 
 	test('EditorOptions', function () {
 		let options = new EditorOptions();

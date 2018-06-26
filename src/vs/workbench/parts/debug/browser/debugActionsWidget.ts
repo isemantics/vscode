@@ -3,66 +3,114 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import lifecycle = require('vs/base/common/lifecycle');
-import errors = require('vs/base/common/errors');
-import severity from 'vs/base/common/severity';
-import builder = require('vs/base/browser/builder');
-import dom = require('vs/base/browser/dom');
-import {StandardMouseEvent} from 'vs/base/browser/mouseEvent';
-import actions = require('vs/base/common/actions');
-import events = require('vs/base/common/events');
-import actionbar = require('vs/base/browser/ui/actionbar/actionbar');
-import {IPartService} from 'vs/workbench/services/part/common/partService';
-import wbext = require('vs/workbench/common/contributions');
-import debug = require('vs/workbench/parts/debug/common/debug');
-import {PauseAction, ContinueAction, StepBackAction, StopAction, DisconnectAction, StepOverAction, StepIntoAction, StepOutAction, RestartAction} from 'vs/workbench/parts/debug/browser/debugActions';
-import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
-import {IStorageService, StorageScope} from 'vs/platform/storage/common/storage';
-import {IMessageService} from 'vs/platform/message/common/message';
-import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
+import 'vs/css!./media/debugActionsWidget';
+import * as errors from 'vs/base/common/errors';
+import * as strings from 'vs/base/common/strings';
+import * as browser from 'vs/base/browser/browser';
+import { $, Builder } from 'vs/base/browser/builder';
+import * as dom from 'vs/base/browser/dom';
+import * as arrays from 'vs/base/common/arrays';
+import { StandardMouseEvent } from 'vs/base/browser/mouseEvent';
+import { IAction, IRunEvent } from 'vs/base/common/actions';
+import { ActionBar, ActionsOrientation } from 'vs/base/browser/ui/actionbar/actionbar';
+import { IPartService } from 'vs/workbench/services/part/common/partService';
+import { IWorkbenchContribution } from 'vs/workbench/common/contributions';
+import { IDebugConfiguration, IDebugService, State } from 'vs/workbench/parts/debug/common/debug';
+import { AbstractDebugAction, PauseAction, ContinueAction, StepBackAction, ReverseContinueAction, StopAction, DisconnectAction, StepOverAction, StepIntoAction, StepOutAction, RestartAction, FocusSessionAction } from 'vs/workbench/parts/debug/browser/debugActions';
+import { FocusSessionActionItem } from 'vs/workbench/parts/debug/browser/debugActionItems';
+import { IConfigurationService, IConfigurationChangeEvent } from 'vs/platform/configuration/common/configuration';
+import { IStorageService, StorageScope } from 'vs/platform/storage/common/storage';
+import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
+import { Themable } from 'vs/workbench/common/theme';
+import { IThemeService } from 'vs/platform/theme/common/themeService';
+import { registerColor, contrastBorder, widgetShadow } from 'vs/platform/theme/common/colorRegistry';
+import { localize } from 'vs/nls';
+import { IKeybindingService } from 'vs/platform/keybinding/common/keybinding';
+import { IContextViewService } from 'vs/platform/contextview/browser/contextView';
+import { INotificationService } from 'vs/platform/notification/common/notification';
+import { RunOnceScheduler } from 'vs/base/common/async';
+import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
+import { IDisposable } from 'vs/base/common/lifecycle';
 
-import IDebugService = debug.IDebugService;
-
-const $ = builder.$;
 const DEBUG_ACTIONS_WIDGET_POSITION_KEY = 'debug.actionswidgetposition';
+const DEBUG_ACTIONS_WIDGET_Y_KEY = 'debug.actionswidgety';
+const HEIGHT = 32;
 
-export class DebugActionsWidget implements wbext.IWorkbenchContribution {
-	private static ID = 'debug.actionsWidget';
+export const debugToolBarBackground = registerColor('debugToolBar.background', {
+	dark: '#333333',
+	light: '#F3F3F3',
+	hc: '#000000'
+}, localize('debugToolBarBackground', "Debug toolbar background color."));
+export const debugToolBarBorder = registerColor('debugToolBar.border', {
+	dark: null,
+	light: null,
+	hc: null
+}, localize('debugToolBarBorder', "Debug toolbar border color."));
 
-	private $el: builder.Builder;
-	private dragArea: builder.Builder;
-	private toDispose: lifecycle.IDisposable[];
-	private actionBar: actionbar.ActionBar;
-	private actions: actions.IAction[];
-	private pauseAction: PauseAction;
-	private continueAction: ContinueAction;
-	private stepBackAction: StepBackAction;
-	private stopAction: StopAction;
-	private disconnectAction: DisconnectAction;
+export class DebugActionsWidget extends Themable implements IWorkbenchContribution {
+
+	private $el: Builder;
+	private dragArea: Builder;
+	private actionBar: ActionBar;
+	private allActions: AbstractDebugAction[] = [];
+	private activeActions: AbstractDebugAction[];
+	private updateScheduler: RunOnceScheduler;
+
 	private isVisible: boolean;
 	private isBuilt: boolean;
 
 	constructor(
-		@IMessageService private messageService: IMessageService,
+		@INotificationService private notificationService: INotificationService,
 		@ITelemetryService private telemetryService: ITelemetryService,
 		@IDebugService private debugService: IDebugService,
-		@IInstantiationService private instantiationService: IInstantiationService,
 		@IPartService private partService: IPartService,
-		@IStorageService private storageService: IStorageService
+		@IStorageService private storageService: IStorageService,
+		@IConfigurationService private configurationService: IConfigurationService,
+		@IThemeService themeService: IThemeService,
+		@IKeybindingService private keybindingService: IKeybindingService,
+		@IContextViewService contextViewService: IContextViewService,
+		@IInstantiationService private instantiationService: IInstantiationService
 	) {
-		this.$el = $().div().addClass('debug-actions-widget');
+		super(themeService);
+
+		this.$el = $().div().addClass('debug-actions-widget').style('top', `${partService.getTitleBarOffset()}px`);
 		this.dragArea = $().div().addClass('drag-area');
 		this.$el.append(this.dragArea);
 
 		const actionBarContainter = $().div().addClass('.action-bar-container');
 		this.$el.append(actionBarContainter);
 
-		this.toDispose = [];
-		this.actionBar = new actionbar.ActionBar(actionBarContainter, {
-			orientation: actionbar.ActionsOrientation.HORIZONTAL
+		this.activeActions = [];
+		this.actionBar = new ActionBar(actionBarContainter.getHTMLElement(), {
+			orientation: ActionsOrientation.HORIZONTAL,
+			actionItemProvider: (action: IAction) => {
+				if (action.id === FocusSessionAction.ID) {
+					return new FocusSessionActionItem(action, this.debugService, this.themeService, contextViewService);
+				}
+
+				return null;
+			}
 		});
 
-		this.toDispose.push(this.actionBar);
+		this.updateScheduler = new RunOnceScheduler(() => {
+			const state = this.debugService.state;
+			const toolBarLocation = this.configurationService.getValue<IDebugConfiguration>('debug').toolBarLocation;
+			if (state === State.Inactive || toolBarLocation === 'docked' || toolBarLocation === 'hidden') {
+				return this.hide();
+			}
+
+			const actions = DebugActionsWidget.getActions(this.allActions, this.toUnbind, this.debugService, this.keybindingService, this.instantiationService);
+			if (!arrays.equals(actions, this.activeActions, (first, second) => first.id === second.id)) {
+				this.actionBar.clear();
+				this.actionBar.push(actions, { icon: true, label: false });
+				this.activeActions = actions;
+			}
+			this.show();
+		}, 20);
+
+		this.updateStyles();
+
+		this.toUnbind.push(this.actionBar);
 		this.registerListeners();
 
 		this.hide();
@@ -70,27 +118,35 @@ export class DebugActionsWidget implements wbext.IWorkbenchContribution {
 	}
 
 	private registerListeners(): void {
-		this.toDispose.push(this.debugService.onDidChangeState(state => {
-			this.onDebugStateChange(state);
-		}));
-		this.toDispose.push(this.actionBar.actionRunner.addListener2(events.EventType.RUN, (e: any) => {
+		this.toUnbind.push(this.debugService.onDidChangeState(() => this.updateScheduler.schedule()));
+		this.toUnbind.push(this.debugService.getViewModel().onDidFocusSession(() => this.updateScheduler.schedule()));
+		this.toUnbind.push(this.configurationService.onDidChangeConfiguration(e => this.onDidConfigurationChange(e)));
+		this.toUnbind.push(this.actionBar.actionRunner.onDidRun((e: IRunEvent) => {
 			// check for error
 			if (e.error && !errors.isPromiseCanceledError(e.error)) {
-				this.messageService.show(severity.Error, e.error);
+				this.notificationService.error(e.error);
 			}
 
 			// log in telemetry
 			if (this.telemetryService) {
+				/* __GDPR__
+					"workbenchActionExecuted" : {
+						"id" : { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
+						"from": { "classification": "SystemMetaData", "purpose": "FeatureInsight" }
+					}
+				*/
 				this.telemetryService.publicLog('workbenchActionExecuted', { id: e.action.id, from: 'debugActionsWidget' });
 			}
 		}));
-		$(window).on(dom.EventType.RESIZE, () => this.setXCoordinate(), this.toDispose);
+		$(window).on(dom.EventType.RESIZE, () => this.setCoordinates(), this.toUnbind);
 
 		this.dragArea.on(dom.EventType.MOUSE_UP, (event: MouseEvent) => {
 			const mouseClickEvent = new StandardMouseEvent(event);
 			if (mouseClickEvent.detail === 2) {
 				// double click on debug bar centers it again #8250
-				this.setXCoordinate(0.5 * window.innerWidth);
+				const widgetWidth = this.$el.getHTMLElement().clientWidth;
+				this.setCoordinates(0.5 * window.innerWidth - 0.5 * widgetWidth, 0);
+				this.storePosition();
 			}
 		});
 
@@ -102,43 +158,79 @@ export class DebugActionsWidget implements wbext.IWorkbenchContribution {
 				const mouseMoveEvent = new StandardMouseEvent(e);
 				// Prevent default to stop editor selecting text #8524
 				mouseMoveEvent.preventDefault();
-				this.setXCoordinate(mouseMoveEvent.posx);
+				// Reduce x by width of drag handle to reduce jarring #16604
+				this.setCoordinates(mouseMoveEvent.posx - 14, mouseMoveEvent.posy - this.partService.getTitleBarOffset());
 			}).once('mouseup', (e: MouseEvent) => {
-				const mouseMoveEvent = new StandardMouseEvent(e);
-				this.storageService.store(DEBUG_ACTIONS_WIDGET_POSITION_KEY, mouseMoveEvent.posx / window.innerWidth, StorageScope.WORKSPACE);
+				this.storePosition();
 				this.dragArea.removeClass('dragged');
 				$window.off('mousemove');
 			});
 		});
+
+		this.toUnbind.push(this.partService.onTitleBarVisibilityChange(() => this.setYCoordinate()));
+		this.toUnbind.push(browser.onDidChangeZoomLevel(() => this.setYCoordinate()));
 	}
 
-	private setXCoordinate(x?: number): void {
+	private storePosition(): void {
+		const position = parseFloat(this.$el.getComputedStyle().left) / window.innerWidth;
+		this.storageService.store(DEBUG_ACTIONS_WIDGET_POSITION_KEY, position, StorageScope.GLOBAL);
+	}
+
+	protected updateStyles(): void {
+		super.updateStyles();
+
+		if (this.$el) {
+			this.$el.style('background-color', this.getColor(debugToolBarBackground));
+
+			const widgetShadowColor = this.getColor(widgetShadow);
+			this.$el.style('box-shadow', widgetShadowColor ? `0 5px 8px ${widgetShadowColor}` : null);
+
+			const contrastBorderColor = this.getColor(contrastBorder);
+			const borderColor = this.getColor(debugToolBarBorder);
+
+			if (contrastBorderColor) {
+				this.$el.style('border', `1px solid ${contrastBorderColor}`);
+			} else {
+				this.$el.style({
+					'border': borderColor ? `solid ${borderColor}` : 'none',
+					'border-width': '1px 0'
+				});
+			}
+		}
+	}
+
+	private setYCoordinate(y = 0): void {
+		const titlebarOffset = this.partService.getTitleBarOffset();
+		this.$el.style('top', `${titlebarOffset + y}px`);
+	}
+
+	private setCoordinates(x?: number, y?: number): void {
 		if (!this.isVisible) {
 			return;
 		}
-		if (!x) {
-			x = parseFloat(this.storageService.get(DEBUG_ACTIONS_WIDGET_POSITION_KEY, StorageScope.WORKSPACE, '0.5')) * window.innerWidth;
+		const widgetWidth = this.$el.getHTMLElement().clientWidth;
+		if (x === undefined) {
+			const positionPercentage = this.storageService.get(DEBUG_ACTIONS_WIDGET_POSITION_KEY, StorageScope.GLOBAL);
+			x = positionPercentage !== undefined ? parseFloat(positionPercentage) * window.innerWidth : (0.5 * window.innerWidth - 0.5 * widgetWidth);
 		}
 
-		const halfWidgetWidth = this.$el.getHTMLElement().clientWidth / 2;
-		x = x + halfWidgetWidth - 16; // take into account half the size of the widget
-		x = Math.max(148, x); // do not allow the widget to overflow on the left
-		x = Math.min(x, window.innerWidth - halfWidgetWidth - 10); // do not allow the widget to overflow on the right
+		x = Math.max(0, Math.min(x, window.innerWidth - widgetWidth)); // do not allow the widget to overflow on the right
 		this.$el.style('left', `${x}px`);
-	}
 
-	public getId(): string {
-		return DebugActionsWidget.ID;
-	}
-
-	private onDebugStateChange(state: debug.State): void {
-		if (state === debug.State.Disabled || state === debug.State.Inactive) {
-			return this.hide();
+		if (y === undefined) {
+			y = this.storageService.getInteger(DEBUG_ACTIONS_WIDGET_Y_KEY, StorageScope.GLOBAL, 0);
 		}
+		if ((y < HEIGHT / 2) || (y > HEIGHT + HEIGHT / 2)) {
+			const moveToTop = y < HEIGHT;
+			this.setYCoordinate(moveToTop ? 0 : HEIGHT);
+			this.storageService.store(DEBUG_ACTIONS_WIDGET_Y_KEY, moveToTop ? 0 : 2 * HEIGHT, StorageScope.GLOBAL);
+		}
+	}
 
-		this.actionBar.clear();
-		this.actionBar.push(this.getActions(this.instantiationService, this.debugService.state), { icon: true, label: false });
-		this.show();
+	private onDidConfigurationChange(event: IConfigurationChangeEvent): void {
+		if (event.affectsConfiguration('debug.hideActionBar') || event.affectsConfiguration('debug.toolBarLocation')) {
+			this.updateScheduler.schedule();
+		}
 	}
 
 	private show(): void {
@@ -147,12 +239,12 @@ export class DebugActionsWidget implements wbext.IWorkbenchContribution {
 		}
 		if (!this.isBuilt) {
 			this.isBuilt = true;
-			this.$el.build(builder.withElementById(this.partService.getWorkbenchElementId()).getHTMLElement());
+			this.$el.build(document.getElementById(this.partService.getWorkbenchElementId()));
 		}
 
 		this.isVisible = true;
 		this.$el.show();
-		this.setXCoordinate();
+		this.setCoordinates();
 	}
 
 	private hide(): void {
@@ -160,48 +252,57 @@ export class DebugActionsWidget implements wbext.IWorkbenchContribution {
 		this.$el.hide();
 	}
 
-	private getActions(instantiationService: IInstantiationService, state: debug.State): actions.IAction[] {
-		if (!this.actions) {
-			this.continueAction = instantiationService.createInstance(ContinueAction, ContinueAction.ID, ContinueAction.LABEL);
-			this.pauseAction = instantiationService.createInstance(PauseAction, PauseAction.ID, PauseAction.LABEL);
-			this.stopAction = instantiationService.createInstance(StopAction, StopAction.ID, StopAction.LABEL);
-			this.disconnectAction = instantiationService.createInstance(DisconnectAction, DisconnectAction.ID, DisconnectAction.LABEL);
-			this.actions = [
-				this.continueAction,
-				instantiationService.createInstance(StepOverAction, StepOverAction.ID, StepOverAction.LABEL),
-				instantiationService.createInstance(StepIntoAction, StepIntoAction.ID, StepIntoAction.LABEL),
-				instantiationService.createInstance(StepOutAction, StepOutAction.ID, StepOutAction.LABEL),
-				instantiationService.createInstance(RestartAction, RestartAction.ID, RestartAction.LABEL),
-				this.stopAction
-			];
-
-			this.actions.forEach(a => {
-				this.toDispose.push(a);
+	public static getActions(allActions: AbstractDebugAction[], toUnbind: IDisposable[], debugService: IDebugService, keybindingService: IKeybindingService, instantiationService: IInstantiationService): AbstractDebugAction[] {
+		if (allActions.length === 0) {
+			allActions.push(new ContinueAction(ContinueAction.ID, ContinueAction.LABEL, debugService, keybindingService));
+			allActions.push(new PauseAction(PauseAction.ID, PauseAction.LABEL, debugService, keybindingService));
+			allActions.push(new StopAction(StopAction.ID, StopAction.LABEL, debugService, keybindingService));
+			allActions.push(new DisconnectAction(DisconnectAction.ID, DisconnectAction.LABEL, debugService, keybindingService));
+			allActions.push(new StepOverAction(StepOverAction.ID, StepOverAction.LABEL, debugService, keybindingService));
+			allActions.push(new StepIntoAction(StepIntoAction.ID, StepIntoAction.LABEL, debugService, keybindingService));
+			allActions.push(new StepOutAction(StepOutAction.ID, StepOutAction.LABEL, debugService, keybindingService));
+			allActions.push(instantiationService.createInstance(RestartAction, RestartAction.ID, RestartAction.LABEL));
+			allActions.push(new StepBackAction(StepBackAction.ID, StepBackAction.LABEL, debugService, keybindingService));
+			allActions.push(new ReverseContinueAction(ReverseContinueAction.ID, ReverseContinueAction.LABEL, debugService, keybindingService));
+			allActions.push(instantiationService.createInstance(FocusSessionAction, FocusSessionAction.ID, FocusSessionAction.LABEL));
+			allActions.forEach(a => {
+				toUnbind.push(a);
 			});
-			this.toDispose.push(this.pauseAction);
-			this.toDispose.push(this.disconnectAction);
 		}
 
-		this.actions[0] = state === debug.State.Running ? this.pauseAction : this.continueAction;
-		const session = this.debugService.getActiveSession();
-		const configuration = this.debugService.getConfigurationManager().configuration;
-		this.actions[5] = configuration && configuration.request === 'attach' ? this.disconnectAction : this.stopAction;
+		const state = debugService.state;
+		const session = debugService.getViewModel().focusedSession;
+		const attached = session && session.configuration.request === 'attach' && session.configuration.type && !strings.equalsIgnoreCase(session.configuration.type, 'extensionHost');
 
-		if (session && session.configuration.capabilities.supportsStepBack) {
-			if (!this.stepBackAction) {
-				this.stepBackAction = instantiationService.createInstance(StepBackAction, StepBackAction.ID, StepBackAction.LABEL);
-				this.toDispose.push(this.stepBackAction);
+		return allActions.filter(a => {
+			if (a.id === ContinueAction.ID) {
+				return state !== State.Running;
+			}
+			if (a.id === PauseAction.ID) {
+				return state === State.Running;
+			}
+			if (a.id === StepBackAction.ID) {
+				return session && session.raw.capabilities.supportsStepBack;
+			}
+			if (a.id === ReverseContinueAction.ID) {
+				return session && session.raw.capabilities.supportsStepBack;
+			}
+			if (a.id === DisconnectAction.ID) {
+				return attached;
+			}
+			if (a.id === StopAction.ID) {
+				return !attached;
+			}
+			if (a.id === FocusSessionAction.ID) {
+				return debugService.getViewModel().isMultiSessionView();
 			}
 
-			// Return a copy of this.actions containing stepBackAction
-			return [...this.actions.slice(0, 4), this.stepBackAction, ...this.actions.slice(4)];
-		} else {
-			return this.actions;
-		}
+			return true;
+		}).sort((first, second) => first.weight - second.weight);
 	}
 
 	public dispose(): void {
-		this.toDispose = lifecycle.dispose(this.toDispose);
+		super.dispose();
 
 		if (this.$el) {
 			this.$el.destroy();

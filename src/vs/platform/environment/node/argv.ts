@@ -8,73 +8,91 @@ import * as minimist from 'minimist';
 import * as assert from 'assert';
 import { firstIndex } from 'vs/base/common/arrays';
 import { localize } from 'vs/nls';
-
-export interface ParsedArgs extends minimist.ParsedArgs {
-	help?: boolean;
-	version?: boolean;
-	wait?: boolean;
-	diff?: boolean;
-	goto?: boolean;
-	'new-window'?: boolean;
-	'reuse-window'?: boolean;
-	locale?: string;
-	'user-data-dir'?: string;
-	performance?: boolean;
-	verbose?: boolean;
-	logExtensionHostCommunication?: boolean;
-	'disable-extensions'?: boolean;
-	extensionHomePath?: string;
-	extensionDevelopmentPath?: string;
-	extensionTestsPath?: string;
-	debugBrkPluginHost?: string;
-	debugPluginHost?: string;
-	'list-extensions'?: boolean;
-	'install-extension'?: string | string[];
-	'uninstall-extension'?: string | string[];
-}
+import { ParsedArgs } from '../common/environment';
+import { isWindows } from 'vs/base/common/platform';
+import product from 'vs/platform/node/product';
+import { MIN_MAX_MEMORY_SIZE_MB } from 'vs/platform/files/common/files';
 
 const options: minimist.Opts = {
 	string: [
 		'locale',
 		'user-data-dir',
-		'extensionHomePath',
+		'extensions-dir',
 		'extensionDevelopmentPath',
 		'extensionTestsPath',
 		'install-extension',
 		'uninstall-extension',
+		'debugId',
+		'debugPluginHost',
 		'debugBrkPluginHost',
-		'debugPluginHost'
+		'debugSearch',
+		'debugBrkSearch',
+		'enable-proposed-api',
+		'export-default-configuration',
+		'install-source',
+		'upload-logs',
+		'driver'
 	],
 	boolean: [
 		'help',
 		'version',
 		'wait',
 		'diff',
+		'add',
 		'goto',
 		'new-window',
+		'unity-launch',
 		'reuse-window',
+		'open-url',
 		'performance',
+		'prof-startup',
 		'verbose',
 		'logExtensionHostCommunication',
 		'disable-extensions',
-		'list-extensions'
+		'list-extensions',
+		'show-versions',
+		'nolazy',
+		'issue',
+		'skip-getting-started',
+		'skip-release-notes',
+		'sticky-quickopen',
+		'disable-restore-windows',
+		'disable-telemetry',
+		'disable-updates',
+		'disable-crash-reporter',
+		'skip-add-to-recently-opened',
+		'status',
+		'file-write',
+		'file-chmod',
+		'driver-verbose'
 	],
 	alias: {
+		add: 'a',
 		help: 'h',
 		version: 'v',
 		wait: 'w',
 		diff: 'd',
 		goto: 'g',
+		status: 's',
 		'new-window': 'n',
 		'reuse-window': 'r',
 		performance: 'p',
-		'disable-extensions': 'disableExtensions'
+		'disable-extensions': 'disableExtensions',
+		'extensions-dir': 'extensionHomePath',
+		'debugPluginHost': 'inspect-extensions',
+		'debugBrkPluginHost': 'inspect-brk-extensions',
+		'debugSearch': 'inspect-search',
+		'debugBrkSearch': 'inspect-brk-search',
 	}
 };
 
 function validate(args: ParsedArgs): ParsedArgs {
 	if (args.goto) {
-		args._.forEach(arg => assert(/^[^:]+(:\d+){0,2}$/.test(arg), localize('gotoValidation', "Arguments in `--goto` mode should be in the format of `FILE(:LINE(:COLUMN))`.")));
+		args._.forEach(arg => assert(/^(\w:)?[^:]+(:\d*){0,2}$/.test(arg), localize('gotoValidation', "Arguments in `--goto` mode should be in the format of `FILE(:LINE(:CHARACTER))`.")));
+	}
+
+	if (args['max-memory']) {
+		assert(args['max-memory'] >= MIN_MAX_MEMORY_SIZE_MB, `The max-memory argument cannot be specified lower than ${MIN_MAX_MEMORY_SIZE_MB} MB.`);
 	}
 
 	return args;
@@ -86,6 +104,7 @@ function stripAppPath(argv: string[]): string[] {
 	if (index > -1) {
 		return [...argv.slice(0, index), ...argv.slice(index + 1)];
 	}
+	return undefined;
 }
 
 /**
@@ -106,7 +125,7 @@ export function parseMainProcessArgv(processArgv: string[]): ParsedArgs {
  * Use this to parse raw code CLI process.argv such as: `Electron cli.js . --verbose --wait`
  */
 export function parseCLIProcessArgv(processArgv: string[]): ParsedArgs {
-	let [,, ...args] = processArgv;
+	let [, , ...args] = processArgv;
 
 	if (process.env['VSCODE_DEV']) {
 		args = stripAppPath(args);
@@ -122,23 +141,40 @@ export function parseArgs(args: string[]): ParsedArgs {
 	return minimist(args, options) as ParsedArgs;
 }
 
-export const optionsHelp: { [name: string]: string; } = {
-	'-d, --diff': localize('diff', "Open a diff editor. Requires to pass two file paths as arguments."),
-	'--disable-extensions': localize('disableExtensions', "Disable all installed extensions."),
-	'-g, --goto': localize('goto', "Open the file at path at the line and column (add :line[:column] to path)."),
+const optionsHelp: { [name: string]: string; } = {
+	'-d, --diff <file> <file>': localize('diff', "Compare two files with each other."),
+	'-a, --add <dir>': localize('add', "Add folder(s) to the last active window."),
+	'-g, --goto <file:line[:character]>': localize('goto', "Open a file at the path on the specified line and character position."),
+	'-n, --new-window': localize('newWindow', "Force to open a new window."),
+	'-r, --reuse-window': localize('reuseWindow', "Force to open a file or folder in an already opened window."),
+	'-w, --wait': localize('wait', "Wait for the files to be closed before returning."),
 	'--locale <locale>': localize('locale', "The locale to use (e.g. en-US or zh-TW)."),
-	'-n, --new-window': localize('newWindow', "Force a new instance of Code."),
-	'-p, --performance': localize('performance', "Start with the 'Developer: Startup Performance' command enabled."),
-	'-r, --reuse-window': localize('reuseWindow', "Force opening a file or folder in the last active window."),
-	'--user-data-dir <dir>': localize('userDataDir', "Specifies the directory that user data is kept in, useful when running as root."),
-	'--verbose': localize('verbose', "Print verbose output (implies --wait)."),
-	'-w, --wait': localize('wait', "Wait for the window to be closed before returning."),
-	'--extensionHomePath': localize('extensionHomePath', "Set the root path for extensions."),
-	'--list-extensions': localize('listExtensions', "List the installed extensions."),
-	'--install-extension <ext>': localize('installExtension', "Installs an extension."),
-	'--uninstall-extension <ext>': localize('uninstallExtension', "Uninstalls an extension."),
+	'--user-data-dir <dir>': localize('userDataDir', "Specifies the directory that user data is kept in. Can be used to open multiple distinct instances of Code."),
 	'-v, --version': localize('version', "Print version."),
 	'-h, --help': localize('help', "Print usage.")
+};
+
+const extensionsHelp: { [name: string]: string; } = {
+	'--extensions-dir <dir>': localize('extensionHomePath', "Set the root path for extensions."),
+	'--list-extensions': localize('listExtensions', "List the installed extensions."),
+	'--show-versions': localize('showVersions', "Show versions of installed extensions, when using --list-extension."),
+	'--install-extension (<extension-id> | <extension-vsix-path>)': localize('installExtension', "Installs an extension."),
+	'--uninstall-extension (<extension-id> | <extension-vsix-path>)': localize('uninstallExtension', "Uninstalls an extension."),
+	'--enable-proposed-api <extension-id>': localize('experimentalApis', "Enables proposed API features for an extension.")
+};
+
+const troubleshootingHelp: { [name: string]: string; } = {
+	'--verbose': localize('verbose', "Print verbose output (implies --wait)."),
+	'--log <level>': localize('log', "Log level to use. Default is 'info'. Allowed values are 'critical', 'error', 'warn', 'info', 'debug', 'trace', 'off'."),
+	'-s, --status': localize('status', "Print process usage and diagnostics information."),
+	'-p, --performance': localize('performance', "Start with the 'Developer: Startup Performance' command enabled."),
+	'--prof-startup': localize('prof-startup', "Run CPU profiler during startup"),
+	'--disable-extensions': localize('disableExtensions', "Disable all installed extensions."),
+	'--inspect-extensions': localize('inspect-extensions', "Allow debugging and profiling of extensions. Check the developer tools for the connection URI."),
+	'--inspect-brk-extensions': localize('inspect-brk-extensions', "Allow debugging and profiling of extensions with the extension host being paused after start. Check the developer tools for the connection URI."),
+	'--disable-gpu': localize('disableGPU', "Disable GPU hardware acceleration."),
+	'--upload-logs': localize('uploadLogs', "Uploads logs from current session to a secure endpoint."),
+	'--max-memory': localize('maxMemory', "Max memory size for a window (in Mbytes).")
 };
 
 export function formatOptions(options: { [name: string]: string; }, columns: number): string {
@@ -146,7 +182,7 @@ export function formatOptions(options: { [name: string]: string; }, columns: num
 	let argLength = Math.max.apply(null, keys.map(k => k.length)) + 2/*left padding*/ + 1/*right padding*/;
 	if (columns - argLength < 25) {
 		// Use a condensed version on narrow terminals
-		return keys.reduce((r, key) => r.concat([`  ${ key }`, `      ${ options[key] }`]), []).join('\n');
+		return keys.reduce((r, key) => r.concat([`  ${key}`, `      ${options[key]}`]), []).join('\n');
 	}
 	let descriptionColumns = columns - argLength - 1;
 	let result = '';
@@ -157,15 +193,15 @@ export function formatOptions(options: { [name: string]: string; }, columns: num
 			result += '\n';
 		}
 		result += '  ' + k + keyPadding + wrappedDescription[0];
-		for (var i = 1; i < wrappedDescription.length; i++) {
+		for (let i = 1; i < wrappedDescription.length; i++) {
 			result += '\n' + (<any>' ').repeat(argLength) + wrappedDescription[i];
 		}
 	});
 	return result;
 }
 
-function wrapText(text: string, columns: number) : string[] {
-	let lines = [];
+function wrapText(text: string, columns: number): string[] {
+	let lines: string[] = [];
 	while (text.length) {
 		let index = text.length < columns ? text.length : text.lastIndexOf(' ', columns);
 		let line = text.slice(0, index).trim();
@@ -177,12 +213,20 @@ function wrapText(text: string, columns: number) : string[] {
 
 export function buildHelpMessage(fullName: string, name: string, version: string): string {
 	const columns = (<any>process.stdout).isTTY ? (<any>process.stdout).columns : 80;
-	const executable = `${ name }${ os.platform() === 'win32' ? '.exe' : '' }`;
+	const executable = `${name}${os.platform() === 'win32' ? '.exe' : ''}`;
 
-	return `${ fullName } ${ version }
+	return `${fullName} ${version}
 
-${ localize('usage', "Usage") }: ${ executable } [${ localize('options', "options") }] [${ localize('paths', 'paths') }...]
+${ localize('usage', "Usage")}: ${executable} [${localize('options', "options")}] [${localize('paths', 'paths')}...]
 
-${ localize('optionsUpperCase', "Options") }:
-${formatOptions(optionsHelp, columns)}`;
+${ isWindows ? localize('stdinWindows', "To read output from another program, append '-' (e.g. 'echo Hello World | {0} -')", product.applicationName) : localize('stdinUnix', "To read from stdin, append '-' (e.g. 'ps aux | grep code | {0} -')", product.applicationName)}
+
+${ localize('optionsUpperCase', "Options")}:
+${formatOptions(optionsHelp, columns)}
+
+${ localize('extensionsManagement', "Extensions Management")}:
+${formatOptions(extensionsHelp, columns)}
+
+${ localize('troubleshooting', "Troubleshooting")}:
+${formatOptions(troubleshootingHelp, columns)}`;
 }

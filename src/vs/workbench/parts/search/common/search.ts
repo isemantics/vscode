@@ -5,24 +5,21 @@
 
 'use strict';
 
-import {TPromise} from 'vs/base/common/winjs.base';
-import {onUnexpectedError, illegalArgument} from 'vs/base/common/errors';
-import {IDisposable} from 'vs/base/common/lifecycle';
-import {CommonEditorRegistry} from 'vs/editor/common/editorCommonExtensions';
-import {IRange} from 'vs/editor/common/editorCommon';
+import { TPromise } from 'vs/base/common/winjs.base';
+import { onUnexpectedError } from 'vs/base/common/errors';
+import { IDisposable } from 'vs/base/common/lifecycle';
+import { ISearchConfiguration, ISearchConfigurationProperties } from 'vs/platform/search/common/search';
+import { SymbolKind, Location } from 'vs/editor/common/modes';
+import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
 import URI from 'vs/base/common/uri';
-import {ISearchConfiguration} from 'vs/platform/search/common/search';
-import glob = require('vs/base/common/glob');
+import { toResource } from 'vs/workbench/common/editor';
+import { IEditorService } from 'vs/workbench/services/editor/common/editorService';
 
-/**
- * Interface used to navigate to types by value.
- */
 export interface IWorkspaceSymbol {
 	name: string;
-	type: string;
-	containerName: string;
-	range: IRange;
-	resource: URI;
+	containerName?: string;
+	kind: SymbolKind;
+	location: Location;
 }
 
 export interface IWorkspaceSymbolProvider {
@@ -73,19 +70,28 @@ export function getWorkspaceSymbols(query: string): TPromise<[IWorkspaceSymbolPr
 	return TPromise.join(promises).then(_ => result);
 }
 
-CommonEditorRegistry.registerLanguageCommand('_executeWorkspaceSymbolProvider', function (accessor, args: { query: string; }) {
-	let {query} = args;
-	if (typeof query !== 'string') {
-		throw illegalArgument();
-	}
-	return getWorkspaceSymbols(query);
-});
+export interface IWorkbenchSearchConfigurationProperties extends ISearchConfigurationProperties {
+	quickOpen: {
+		includeSymbols: boolean;
+	};
+}
 
 export interface IWorkbenchSearchConfiguration extends ISearchConfiguration {
-	search: {
-		quickOpen: {
-			includeSymbols: boolean;
-		},
-		exclude: glob.IExpression;
-	};
+	search: IWorkbenchSearchConfigurationProperties;
+}
+
+/**
+ * Helper to return all opened editors with resources not belonging to the currently opened workspace.
+ */
+export function getOutOfWorkspaceEditorResources(editorService: IEditorService, contextService: IWorkspaceContextService): URI[] {
+	const resources: URI[] = [];
+
+	editorService.editors.forEach(editor => {
+		const resource = toResource(editor, { supportSideBySide: true });
+		if (resource && !contextService.isInsideWorkspace(resource)) {
+			resources.push(resource);
+		}
+	});
+
+	return resources;
 }
